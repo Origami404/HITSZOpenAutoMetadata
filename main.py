@@ -1,6 +1,8 @@
-from typing import Iterable, Literal, Optional
+from typing import Any, Callable, Iterable, Literal, NoReturn, Optional, override
 from itertools import product, starmap
 from dataclasses import dataclass
+from abc import ABC, abstractmethod
+import operator
 
 type 可能未知[T] = Optional[T]
 未知 = None
@@ -61,6 +63,10 @@ class 专业:
     ) -> Iterable["专业"]:
         return starmap(cls, product(年级集合, 毕业代码集合, 学位集合))
 
+    @override
+    def __hash__(self) -> int:
+        return hash((self.年级, self.毕业代码, self.学位))
+
 
 type 学年类型 = Literal["大一", "大二", "大三", "大四"]
 type 学期类型 = Literal["秋", "春", "夏"]
@@ -76,6 +82,10 @@ class 上课时间:
         cls, 学年集合: Iterable[学年类型], 学期集合: Iterable[学期类型]
     ) -> Iterable["上课时间"]:
         return starmap(cls, product(学年集合, 学期集合))
+
+    @override
+    def __hash__(self) -> int:
+        return hash((self.学年, self.学期))
 
 
 type 绩点影响类型 = Literal["核心权重", "核心扣分", "GPA"]
@@ -428,51 +438,178 @@ def 年级范围(开始: int, 结束: int) -> Iterable[int]:
 
 
 # TODO 查询系统设计与实现
-class 过滤器:
-    pass
+未知代表类型: Literal["全集", "空集"] = "全集"
 
 
-class 集合过滤器[目标类型](过滤器):
-    集合: type[目标类型]
+class 过滤器(ABC):
+    @abstractmethod
+    def keep(self, record: 课程属性记录) -> bool:
+        pass
+
+    def 处理未知(self) -> bool:
+        match 未知代表类型:
+            case "全集":
+                return True
+            case "空集":
+                return False
+            case _:
+                raise ValueError
+
+
+@dataclass
+class 集合过滤器(过滤器):
+    集合: Literal["专业", "上课时间", "课程分类"]
     类型: Literal["存在任一", "存在所有", "均不存在于"]
-    pass
+    值: frozenset
+
+    @override
+    def keep(self, record: 课程属性记录) -> bool:
+        target_set: frozenset
+        match self.集合:
+            case "专业":
+                target_set = record.专业集
+            case "上课时间":
+                target_set = record.上课时间集
+            case "课程分类":
+                target_set = record.课程分类
+            case _:
+                raise ValueError
+
+        match self.类型:
+            case "存在任一":
+                return any(target in target_set for target in self.值)
+            case "存在所有":
+                return all(target in target_set for target in self.值)
+            case "均不存在于":
+                return not any(target in target_set for target in self.值)
+            case _:
+                raise ValueError
 
 
+@dataclass
 class 数值过滤器(过滤器):
     数值: Literal["学分值", "课时数"]
-    类型: Literal["等于", "大于", "小于", "大于等于", "小于等于"]
-    pass
+    类型: Literal["不等于", "等于", "大于", "小于", "大于等于", "小于等于"]
+    值: float | int
+
+    @override
+    def keep(self, record: 课程属性记录) -> bool:
+        target_value: 可能未知[float] | 可能未知[int]
+        match self.数值:
+            case "学分值":
+                target_value = record.学分值
+            case "课时数":
+                target_value = record.课时数
+            case _:
+                raise ValueError
+
+        if target_value == 未知:
+            return self.处理未知()
+
+        op: Callable[[float | int, float | int], bool]
+        match self.类型:
+            case "不等于":
+                op = operator.ne
+            case "等于":
+                op = operator.eq
+            case "大于":
+                op = operator.gt
+            case "小于":
+                op = operator.lt
+            case "大于等于":
+                op = operator.ge
+            case "小于等于":
+                op = operator.le
+            case _:
+                raise ValueError
+
+        return op(target_value, self.值)  # type: ignore
 
 
-class 枚举过滤器[目标类型](过滤器):
-    枚举: type[目标类型]
-    类型: Literal["包含", "不包含"]
-    pass
+@dataclass
+class 枚举过滤器(过滤器):
+    枚举: Literal["绩点影响"]
+    类型: Literal["应该是", "不应该是"]
+    值: frozenset
+
+    @override
+    def keep(self, record: 课程属性记录) -> bool:
+        target_value: 可能未知[Any]
+        match self.枚举:
+            case "绩点影响":
+                target_value = record.绩点影响
+            case _:
+                raise ValueError
+
+        if target_value == 未知:
+            return self.处理未知()
+
+        match self.类型:
+            case "应该是":
+                return target_value in self.值
+            case "不应该是":
+                return target_value not in self.值
+            case _:
+                raise ValueError
 
 
-class 逻辑表达式:
-    pass
+class 逻辑表达式(ABC):
+    @abstractmethod
+    def __call__(self, courses: Iterable[课程]) -> Iterable[课程]:
+        pass
 
 
 class 逻辑与(逻辑表达式):
-    pass
+    过滤器们: tuple[过滤器]
+
+    def __init__(self, *过滤器们) -> None:
+        super().__init__()
+        self.过滤器们 = 过滤器们
+
+    def __call__(self, courses: Iterable[课程]) -> Iterable[课程]:
+        def should_keep_course(course: 课程) -> bool:
+            for f in self.过滤器们:
+                for r in course.记录:
+                    if not f.keep(r):
+                        return False
+            return True
+
+        return filter(should_keep_course, courses)
 
 
 # 暂时不设计顶层的逻辑或
 
 # 查询器例子
 查询_2023级计信大类内任何专业都要上的课 = 逻辑与(
-    集合过滤器(专业, "存在所有", 大类_23计信),
+    集合过滤器("专业", "存在所有", 大类_23计信),
 )
 查询_2023级自动化大类内可能要上的课 = 逻辑与(
-    集合过滤器(专业, "存在任一", 大类_23自动化),
+    集合过滤器("专业", "存在任一", 大类_23自动化),
 )
 查询_2023级要以计算机专业毕业大二要上的考试课 = 逻辑与(
-    集合过滤器(专业, "存在所有", fset(专业(2023, 计算机))),
-    枚举过滤器(上课时间, "包含", fset(大二秋, 大二春, 大二夏)),
-    枚举过滤器(绩点影响类型, "包含", fset("核心权重")),
+    集合过滤器("专业", "存在所有", fset(专业(2023, 计算机))),
+    集合过滤器("上课时间", "存在任一", fset(大二秋, 大二春, 大二夏)),
+    枚举过滤器("绩点影响", "应该是", fset("核心权重")),
 )
 查询_以计算机毕业的情况下23级要上但是22级不用上的课 = 逻辑与(
-    集合过滤器(专业, "存在所有", fset(专业(2023, 计算机))),
-    集合过滤器(专业, "均不存在于", fset(专业(2022, 计算机))),
+    集合过滤器("专业", "存在所有", fset(专业(2023, 计算机))),
+    集合过滤器("专业", "均不存在于", fset(专业(2022, 计算机))),
 )
+
+if __name__ == "__main__":
+
+    def test(prompt: str, query: 逻辑表达式) -> None:
+        print(f"================== 测试 {prompt} ==================")
+        for c in query(元数据):
+            print(c.主课号, c.课程名称)
+
+    test("2023级计信大类内任何专业都要上的课", 查询_2023级计信大类内任何专业都要上的课)
+    test("2023级自动化大类内可能要上的课", 查询_2023级自动化大类内可能要上的课)
+    test(
+        "2023级要以计算机专业毕业大二要上的考试课",
+        查询_2023级要以计算机专业毕业大二要上的考试课,
+    )
+    test(
+        "以计算机毕业的情况下23级要上但是22级不用上的课",
+        查询_以计算机毕业的情况下23级要上但是22级不用上的课,
+    )
