@@ -437,7 +437,6 @@ def 年级范围(开始: int, 结束: int) -> Iterable[int]:
 ]
 
 
-# TODO 查询系统设计与实现
 未知代表类型: Literal["全集", "空集"] = "全集"
 
 
