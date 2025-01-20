@@ -457,14 +457,17 @@ class 过滤器(ABC):
 
 @dataclass
 class 集合过滤器(过滤器):
-    集合: Literal["专业", "上课时间", "课程分类"]
-    类型: Literal["存在任一", "存在所有", "均不存在于"]
+    type 成员类型 = Literal["专业", "上课时间", "课程分类"]
+    type 过滤条件 = Literal["存在任一", "存在所有", "均不存在于"]
+
+    目标成员: 成员类型
+    条件: 过滤条件
     值: frozenset
 
     @override
     def keep(self, record: 课程属性记录) -> bool:
         target_set: frozenset
-        match self.集合:
+        match self.目标成员:
             case "专业":
                 target_set = record.专业集
             case "上课时间":
@@ -474,7 +477,7 @@ class 集合过滤器(过滤器):
             case _:
                 raise ValueError
 
-        match self.类型:
+        match self.条件:
             case "存在任一":
                 return any(target in target_set for target in self.值)
             case "存在所有":
@@ -487,14 +490,17 @@ class 集合过滤器(过滤器):
 
 @dataclass
 class 数值过滤器(过滤器):
-    数值: Literal["学分值", "课时数"]
-    类型: Literal["不等于", "等于", "大于", "小于", "大于等于", "小于等于"]
+    type 成员类型 = Literal["学分值", "课时数"]
+    type 目标条件 = Literal["不等于", "等于", "大于", "小于", "大于等于", "小于等于"]
+
+    目标成员: 成员类型
+    条件: 目标条件
     值: float | int
 
     @override
     def keep(self, record: 课程属性记录) -> bool:
         target_value: 可能未知[float] | 可能未知[int]
-        match self.数值:
+        match self.目标成员:
             case "学分值":
                 target_value = record.学分值
             case "课时数":
@@ -506,7 +512,7 @@ class 数值过滤器(过滤器):
             return self.处理未知()
 
         op: Callable[[float | int, float | int], bool]
-        match self.类型:
+        match self.条件:
             case "不等于":
                 op = operator.ne
             case "等于":
@@ -527,14 +533,17 @@ class 数值过滤器(过滤器):
 
 @dataclass
 class 枚举过滤器(过滤器):
-    枚举: Literal["绩点影响"]
-    类型: Literal["应该是", "不应该是"]
+    type 成员类型 = Literal["绩点影响"]
+    type 过滤条件 = Literal["应该是", "不应该是"]
+
+    目标成员: 成员类型
+    条件: 过滤条件
     值: frozenset
 
     @override
     def keep(self, record: 课程属性记录) -> bool:
         target_value: 可能未知[Any]
-        match self.枚举:
+        match self.目标成员:
             case "绩点影响":
                 target_value = record.绩点影响
             case _:
@@ -543,7 +552,7 @@ class 枚举过滤器(过滤器):
         if target_value == 未知:
             return self.处理未知()
 
-        match self.类型:
+        match self.条件:
             case "应该是":
                 return target_value in self.值
             case "不应该是":
@@ -595,20 +604,131 @@ class 逻辑与(逻辑表达式):
     集合过滤器("专业", "均不存在于", fset(专业(2022, 计算机))),
 )
 
+
+class 集合过滤器包装:
+    目标成员: 集合过滤器.成员类型
+
+    def __init__(self, 目标成员: 集合过滤器.成员类型) -> None:
+        self.目标成员 = 目标成员
+
+    def _flatten[T](self, it: Iterable[T | Iterable[T]]) -> frozenset[T]:
+        result = set()
+        for elm in it:
+            if isinstance(elm, frozenset) or isinstance(elm, set):
+                result.update(elm)
+            else:
+                result.add(elm)
+        return frozenset(result)
+
+    def 存在任一[T](self, *值: T | Iterable[T]) -> 集合过滤器:
+        return 集合过滤器(self.目标成员, "存在任一", self._flatten(值))
+
+    def 存在所有[T](self, *值: T | Iterable[T]) -> 集合过滤器:
+        return 集合过滤器(self.目标成员, "存在所有", self._flatten(值))
+
+    def 均不存在于[T](self, *值: T | Iterable[T]) -> 集合过滤器:
+        return 集合过滤器(self.目标成员, "均不存在于", self._flatten(值))
+
+
+class 数值过滤器包装:
+    目标成员: 数值过滤器.成员类型
+
+    def __init__(self, 目标成员: 数值过滤器.成员类型) -> None:
+        self.目标成员 = 目标成员
+
+    def 不等于(self, 值) -> 数值过滤器:
+        return 数值过滤器(self.目标成员, "不等于", 值)
+
+    def 等于(self, 值) -> 数值过滤器:
+        return 数值过滤器(self.目标成员, "等于", 值)
+
+    def 大于(self, 值) -> 数值过滤器:
+        return 数值过滤器(self.目标成员, "大于", 值)
+
+    def 小于(self, 值) -> 数值过滤器:
+        return 数值过滤器(self.目标成员, "小于", 值)
+
+    def 大于等于(self, 值) -> 数值过滤器:
+        return 数值过滤器(self.目标成员, "大于等于", 值)
+
+    def 小于等于(self, 值) -> 数值过滤器:
+        return 数值过滤器(self.目标成员, "小于等于", 值)
+
+
+class 枚举过滤器包装:
+    目标成员: 枚举过滤器.成员类型
+
+    def __init__(self, 目标成员: 枚举过滤器.成员类型) -> None:
+        self.目标成员 = 目标成员
+
+    def 应该是(self, *值) -> 枚举过滤器:
+        return 枚举过滤器(self.目标成员, "应该是", fset(*值))
+
+    def 不应该是(self, *值) -> 枚举过滤器:
+        return 枚举过滤器(self.目标成员, "不应该是", fset(*值))
+
+
+class 课程筛选:
+    专业 = 集合过滤器包装("专业")
+    上课时间 = 集合过滤器包装("上课时间")
+    课程分类 = 集合过滤器包装("课程分类")
+    学分值 = 数值过滤器包装("学分值")
+    课时数 = 数值过滤器包装("课时数")
+    绩点影响 = 枚举过滤器包装("绩点影响")
+
+
+查询新API_2023级计信大类内任何专业都要上的课 = 逻辑与(
+    # 集合过滤器("专业", "存在所有", 大类_23计信),
+    课程筛选.专业.存在所有(大类_23计信),
+)
+查询新API_2023级自动化大类内可能要上的课 = 逻辑与(
+    # 集合过滤器("专业", "存在任一", 大类_23自动化),
+    课程筛选.专业.存在任一(大类_23自动化),
+)
+查询新API_2023级要以计算机专业毕业大二要上的考试课 = 逻辑与(
+    # 集合过滤器("专业", "存在所有", fset(专业(2023, 计算机))),
+    # 集合过滤器("上课时间", "存在任一", fset(大二秋, 大二春, 大二夏)),
+    # 枚举过滤器("绩点影响", "应该是", fset("核心权重")),
+    课程筛选.专业.存在所有(专业(2023, 计算机)),
+    课程筛选.上课时间.存在任一(大二秋, 大二春, 大二夏),
+    课程筛选.绩点影响.应该是("核心权重"),
+)
+查询新API_以计算机毕业的情况下23级要上但是22级不用上的课 = 逻辑与(
+    # 集合过滤器("专业", "存在所有", fset(专业(2023, 计算机))),
+    # 集合过滤器("专业", "均不存在于", fset(专业(2022, 计算机))),
+    课程筛选.专业.存在所有(专业(2023, 计算机)),
+    课程筛选.专业.均不存在于(专业(2022, 计算机)),
+)
+
 if __name__ == "__main__":
+    样例: list[tuple[逻辑表达式, 逻辑表达式, str]] = [
+        (
+            查询新API_2023级计信大类内任何专业都要上的课,
+            查询_2023级计信大类内任何专业都要上的课,
+            "2023级计信大类内任何专业都要上的课",
+        ),
+        (
+            查询新API_2023级自动化大类内可能要上的课,
+            查询_2023级自动化大类内可能要上的课,
+            "2023级自动化大类内可能要上的课",
+        ),
+        (
+            查询新API_2023级要以计算机专业毕业大二要上的考试课,
+            查询_2023级要以计算机专业毕业大二要上的考试课,
+            "2023级要以计算机专业毕业大二要上的考试课",
+        ),
+        (
+            查询新API_以计算机毕业的情况下23级要上但是22级不用上的课,
+            查询_以计算机毕业的情况下23级要上但是22级不用上的课,
+            "以计算机毕业的情况下23级要上但是22级不用上的课",
+        ),
+    ]
 
     def test(prompt: str, query: 逻辑表达式) -> None:
         print(f"================== 测试 {prompt} ==================")
         for c in query(元数据):
             print(c.主课号, c.课程名称)
 
-    test("2023级计信大类内任何专业都要上的课", 查询_2023级计信大类内任何专业都要上的课)
-    test("2023级自动化大类内可能要上的课", 查询_2023级自动化大类内可能要上的课)
-    test(
-        "2023级要以计算机专业毕业大二要上的考试课",
-        查询_2023级要以计算机专业毕业大二要上的考试课,
-    )
-    test(
-        "以计算机毕业的情况下23级要上但是22级不用上的课",
-        查询_以计算机毕业的情况下23级要上但是22级不用上的课,
-    )
+    for 新API, 原始API, 名字 in 样例:
+        test(名字, 新API)
+        assert list(新API(元数据)) == list(原始API(元数据))
